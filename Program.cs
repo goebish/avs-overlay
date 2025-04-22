@@ -1,16 +1,66 @@
 ﻿using System;
 using System.Runtime.InteropServices;
+using System.Linq;
+using System.Windows.Forms; // Required for Screen[]
+using System.Threading;
 
 class Program
 {
     static IntPtr _thumbHandle;
     static IntPtr _windowHandle;
+    static IntPtr _targetWindow;
+    static Thread _watchThread;
 
-    static void Main()
+    static void Main(string[] args)
     {
+        // Default crop values
+        int cropLeft = 11;
+        int cropTop = 20;
+        int cropRight = 8;
+        int cropBottom = 14;
+        int monitorIndex = 0;
+
+        // Handle command-line arguments
+        for (int i = 0; i < args.Length; i++)
+        {
+            string arg = args[i];
+
+            if (arg == "--help")
+            {
+                Console.WriteLine("Available options:");
+                Console.WriteLine("  --crop L,T,R,B   Set crop margins (left, top, right, bottom)");
+                Console.WriteLine("  --monitor N      Set target monitor index (0, 1, 2...)");
+                Console.WriteLine("  --help           Show this help message");
+                return;
+            }
+            else if (arg == "--crop" && i + 1 < args.Length)
+            {
+                var parts = args[i + 1].Split(',');
+                if (parts.Length == 4 &&
+                    int.TryParse(parts[0], out cropLeft) &&
+                    int.TryParse(parts[1], out cropTop) &&
+                    int.TryParse(parts[2], out cropRight) &&
+                    int.TryParse(parts[3], out cropBottom))
+                {
+                    Console.WriteLine($"Using custom crop: {cropLeft},{cropTop},{cropRight},{cropBottom}");
+                    i++;
+                }
+                else
+                {
+                    Console.WriteLine("Invalid format for --crop. Use: --crop 8,30,8,8");
+                    return;
+                }
+            }
+            else if (arg == "--monitor" && i + 1 < args.Length && int.TryParse(args[i + 1], out monitorIndex))
+            {
+                Console.WriteLine($"Selected monitor: {monitorIndex}");
+                i++;
+            }
+        }
+
         string className = "AVSOverlayWindow";
 
-        // Enregistrement de la classe de fenêtre
+        // Register the window class
         WNDCLASS wnd = new WNDCLASS
         {
             lpfnWndProc = WndProc,
@@ -19,25 +69,33 @@ class Program
         };
         RegisterClass(ref wnd);
 
-        // Recherche de la fenêtre AVS
-        IntPtr targetWindow = FindWindow(null, "AVS");
-        if (targetWindow == IntPtr.Zero)
+        // Wait for the AVS window at startup
+        Console.WriteLine("Waiting for AVS window...");
+        while ((_targetWindow = FindWindow(null, "AVS")) == IntPtr.Zero)
         {
-            Console.WriteLine("Fenêtre AVS introuvable.");
-            return;
+            Console.WriteLine("AVS window not found, retrying in 1 second...");
+            Thread.Sleep(1000);
         }
 
-        // Taille écran
-        int screenWidth = GetSystemMetrics(0);
-        int screenHeight = GetSystemMetrics(1);
+        Console.WriteLine("AVS window detected.");
 
-        // Création de la fenêtre plein écran
+        // Monitor selection
+        var screens = Screen.AllScreens;
+        if (monitorIndex < 0 || monitorIndex >= screens.Length)
+        {
+            Console.WriteLine($"Monitor {monitorIndex} not found. {screens.Length} detected.");
+            return;
+        }
+        var screen = screens[monitorIndex];
+        var bounds = screen.Bounds;
+
+        // Create fullscreen window on selected screen
         _windowHandle = CreateWindowEx(
             0,
             className,
             "AVS Overlay",
             WS_POPUP,
-            0, 0, screenWidth, screenHeight,
+            bounds.X, bounds.Y, bounds.Width, bounds.Height,
             IntPtr.Zero,
             IntPtr.Zero,
             GetModuleHandle(null),
@@ -45,58 +103,78 @@ class Program
         );
         ShowWindow(_windowHandle, SW_SHOW);
 
-        // Taille de la fenêtre AVS
-        RECT avsRect;
-        if (!GetWindowRect(targetWindow, out avsRect))
+        void RegisterThumbnail()
         {
-            Console.WriteLine("Échec de GetWindowRect.");
-            return;
+            // Get AVS window size
+            if (!GetWindowRect(_targetWindow, out RECT avsRect))
+            {
+                Console.WriteLine("Failed to get AVS window size.");
+                return;
+            }
+
+            int avsWidth = avsRect.right - avsRect.left;
+            int avsHeight = avsRect.bottom - avsRect.top;
+
+            // Register the thumbnail
+            int result = DwmRegisterThumbnail(_windowHandle, _targetWindow, out _thumbHandle);
+            if (result != 0)
+            {
+                Console.WriteLine("Failed to register thumbnail.");
+                return;
+            }
+
+            DWM_THUMBNAIL_PROPERTIES props = new DWM_THUMBNAIL_PROPERTIES
+            {
+                dwFlags = DWM_TNP_RECTDESTINATION | DWM_TNP_VISIBLE | DWM_TNP_OPACITY | DWM_TNP_RECTSOURCE,
+                rcDestination = new RECT
+                {
+                    left = 0,
+                    top = 0,
+                    right = bounds.Width,
+                    bottom = bounds.Height
+                },
+                rcSource = new RECT
+                {
+                    left = cropLeft,
+                    top = cropTop,
+                    right = avsWidth - cropRight,
+                    bottom = avsHeight - cropBottom
+                },
+                opacity = 255,
+                fVisible = true,
+                fSourceClientAreaOnly = false
+            };
+
+            DwmUpdateThumbnailProperties(_thumbHandle, ref props);
         }
 
-        int avsWidth = avsRect.right - avsRect.left;
-        int avsHeight = avsRect.bottom - avsRect.top;
+        RegisterThumbnail();
 
-        // Enregistrement du thumbnail
-        int result = DwmRegisterThumbnail(_windowHandle, targetWindow, out _thumbHandle);
-        if (result != 0)
+        // Start thread to monitor AVS window and reconnect if needed
+        _watchThread = new Thread(() =>
         {
-            Console.WriteLine("Échec de DwmRegisterThumbnail.");
-            return;
-        }
-
-        // Crop manuel
-        int cropLeft = 11;
-        int cropTop = 20;
-        int cropRight = 8;
-        int cropBottom = 14;
-
-        DWM_THUMBNAIL_PROPERTIES props = new DWM_THUMBNAIL_PROPERTIES
-        {
-            dwFlags = DWM_TNP_RECTDESTINATION | DWM_TNP_VISIBLE | DWM_TNP_OPACITY | DWM_TNP_RECTSOURCE,
-            rcDestination = new RECT
+            while (true)
             {
-                left = 0,
-                top = 0,
-                right = screenWidth,
-                bottom = screenHeight
-            },
-            rcSource = new RECT
-            {
-                left = cropLeft,
-                top = cropTop,
-                right = avsWidth - cropRight,
-                bottom = avsHeight - cropBottom
-            },
-            opacity = 255,
-            fVisible = true,
-            fSourceClientAreaOnly = false
-        };
+                if (!IsWindow(_targetWindow))
+                {
+                    Console.WriteLine("AVS window closed. Waiting for it to return...");
+                    DwmUnregisterThumbnail(_thumbHandle);
 
-        DwmUpdateThumbnailProperties(_thumbHandle, ref props);
+                    while ((_targetWindow = FindWindow(null, "AVS")) == IntPtr.Zero)
+                        Thread.Sleep(1000);
 
-        Console.WriteLine("Miroir AVS actif. Appuie sur ÉCHAP pour quitter.");
+                    Console.WriteLine("AVS window found again, reconfiguring thumbnail...");
+                    RegisterThumbnail();
+                }
+                Thread.Sleep(1000);
+            }
+        });
+        _watchThread.IsBackground = true;
+        _watchThread.Start();
 
-        // Boucle de messages
+        Console.WriteLine("AVS mirroring active. Press ESC to quit.");
+
+        // Message loop
         MSG msg;
         while (GetMessage(out msg, IntPtr.Zero, 0, 0))
         {
@@ -110,13 +188,13 @@ class Program
 
     static IntPtr WndProc(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam)
     {
-        if (msg == WM_KEYDOWN && wParam.ToInt32() == 0x1B) // ESC
+        if (msg == WM_KEYDOWN && wParam.ToInt32() == 0x1B)
             PostQuitMessage(0);
 
         return DefWindowProc(hWnd, msg, wParam, lParam);
     }
 
-    // === Constantes ===
+    // === Constants ===
     const int WS_POPUP = unchecked((int)0x80000000);
     const int SW_SHOW = 5;
     const uint WM_KEYDOWN = 0x0100;
@@ -184,6 +262,7 @@ class Program
     [DllImport("user32.dll")] static extern int GetSystemMetrics(int nIndex);
     [DllImport("kernel32.dll")] static extern IntPtr GetModuleHandle(string lpModuleName);
     [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
+    [DllImport("user32.dll")] static extern bool IsWindow(IntPtr hWnd);
     [DllImport("dwmapi.dll")] static extern int DwmRegisterThumbnail(IntPtr dest, IntPtr src, out IntPtr thumb);
     [DllImport("dwmapi.dll")] static extern int DwmUnregisterThumbnail(IntPtr thumb);
     [DllImport("dwmapi.dll")] static extern int DwmUpdateThumbnailProperties(IntPtr hThumb, ref DWM_THUMBNAIL_PROPERTIES props);
