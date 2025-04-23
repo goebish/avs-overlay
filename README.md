@@ -1,7 +1,8 @@
 ﻿# AVS Overlay
 
 **AVS Overlay** is a lightweight fullscreen mirroring tool for Winamp’s legendary AVS visualizer.  
-It allows you to run multiple fullscreen instances of AVS on any monitor, crop borders precisely, and reconnect automatically when AVS is restarted — all from the command line.
+
+It's been created to replace the desktop overlay mode that's been broken since Windows Vista.
 
 Perfect for retro-inspired audio-visual setups, custom stage visuals, home psychonaut labs, or just kicking it like it’s 2003.
 
@@ -10,12 +11,10 @@ Perfect for retro-inspired audio-visual setups, custom stage visuals, home psych
 ## ✨ Features
 
 - Fullscreen mirroring of the AVS window using native DWM thumbnails  
-- Multi-monitor support (`--monitor`)  
-- Precise crop control to remove window borders (`--crop`)  
-- Auto-reconnect if AVS is closed and reopened  
-- Ensures the mirrored AVS window belongs to `winamp.exe`  
+- Multi-monitor support
+- Precise crop control to remove window borders
+- Auto-reconnect if AVS is closed and reopened    
 - Launch multiple instances on multiple monitors  
-- No external libraries — pure C# + Win32
 
 ---
 
@@ -34,8 +33,9 @@ AVSOverlay.exe [--monitor N] [--crop L,T,R,B] [--help]
 **Example:**
 
 ```
-AVSOverlay.exe --monitor 1 --crop 11,20,8,14
+AVSOverlay.exe --monitor 0 --crop 11,20,8,14
 ```
+(default settings if no arguments are provided)
 
 ---
 
@@ -62,14 +62,14 @@ If you're:
 ## 🧠 Behind the Scenes
 
 AVS Overlay uses `DwmRegisterThumbnail` to capture and mirror AVS with zero-copy rendering.  
-It polls windows titled `"AVS"`, filters only those owned by `winamp.exe`, and mirrors them in a borderless fullscreen window on the monitor of your choice.
+It polls windows titled `"AVS"`, filters only the one owned by `winamp.exe`, and mirrors it in a borderless fullscreen window on the monitor of your choice.
 
 ---
 
 ## 🛠 Build Instructions
 
 ```
-git clone https://github.com/yourusername/avs-overlay
+git clone https://github.com/goebish/avs-overlay
 cd avs-overlay
 dotnet build -c Release
 ```
@@ -84,5 +84,4 @@ MIT — free to use, remix, and deploy in your own audio-visual rituals.
 
 ## 💬 Credits
 
-Created by a veteran of the free party scene,  
-revived in C# by pure passion and pixel madness.
+Created by pure passion and pixel madness.

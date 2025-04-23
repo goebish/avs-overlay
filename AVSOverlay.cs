@@ -5,7 +5,7 @@ using System.Threading;
 using System.Linq;
 using System.Windows.Forms; // Required for Screen[]
 
-class Program
+class AVSOverlay
 {
     static IntPtr _thumbHandle;
     static IntPtr _windowHandle;
@@ -71,10 +71,9 @@ class Program
         RegisterClass(ref wnd);
 
         // Wait for a valid AVS window belonging to winamp.exe
-        Console.WriteLine("Waiting for a valid AVS window (owned by winamp.exe)...");
+        Console.WriteLine("Waiting for AVS window...");
         while ((_targetWindow = FindValidAVSWindow()) == IntPtr.Zero)
         {
-            Console.WriteLine("AVS window not found or not owned by winamp.exe, retrying in 1 second...");
             Thread.Sleep(1000);
         }
 
@@ -162,7 +161,7 @@ class Program
                     while ((_targetWindow = FindValidAVSWindow()) == IntPtr.Zero)
                         Thread.Sleep(1000);
 
-                    Console.WriteLine("AVS window found again, reconfiguring thumbnail...");
+                    Console.WriteLine("AVS window found, reconfiguring thumbnail...");
                     RegisterThumbnail();
                 }
                 Thread.Sleep(1000);
@@ -171,7 +170,7 @@ class Program
         _watchThread.IsBackground = true;
         _watchThread.Start();
 
-        Console.WriteLine("AVS mirroring active. Press ESC to quit.");
+        Console.WriteLine("AVS mirroring active.\nClick the overlay monitor then press ESC to quit.");
 
         // Message loop
         MSG msg;
