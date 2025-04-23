@@ -1,8 +1,9 @@
 ﻿using System;
 using System.Runtime.InteropServices;
+using System.Text;
+using System.Threading;
 using System.Linq;
 using System.Windows.Forms; // Required for Screen[]
-using System.Threading;
 
 class Program
 {
@@ -20,7 +21,7 @@ class Program
         int cropBottom = 14;
         int monitorIndex = 0;
 
-        // Handle command-line arguments
+        // CLI options
         for (int i = 0; i < args.Length; i++)
         {
             string arg = args[i];
@@ -60,7 +61,7 @@ class Program
 
         string className = "AVSOverlayWindow";
 
-        // Register the window class
+        // Register custom window class
         WNDCLASS wnd = new WNDCLASS
         {
             lpfnWndProc = WndProc,
@@ -69,11 +70,11 @@ class Program
         };
         RegisterClass(ref wnd);
 
-        // Wait for the AVS window at startup
-        Console.WriteLine("Waiting for AVS window...");
-        while ((_targetWindow = FindWindow(null, "AVS")) == IntPtr.Zero)
+        // Wait for a valid AVS window belonging to winamp.exe
+        Console.WriteLine("Waiting for a valid AVS window (owned by winamp.exe)...");
+        while ((_targetWindow = FindValidAVSWindow()) == IntPtr.Zero)
         {
-            Console.WriteLine("AVS window not found, retrying in 1 second...");
+            Console.WriteLine("AVS window not found or not owned by winamp.exe, retrying in 1 second...");
             Thread.Sleep(1000);
         }
 
@@ -89,7 +90,7 @@ class Program
         var screen = screens[monitorIndex];
         var bounds = screen.Bounds;
 
-        // Create fullscreen window on selected screen
+        // Create fullscreen mirror window
         _windowHandle = CreateWindowEx(
             0,
             className,
@@ -105,7 +106,6 @@ class Program
 
         void RegisterThumbnail()
         {
-            // Get AVS window size
             if (!GetWindowRect(_targetWindow, out RECT avsRect))
             {
                 Console.WriteLine("Failed to get AVS window size.");
@@ -115,7 +115,6 @@ class Program
             int avsWidth = avsRect.right - avsRect.left;
             int avsHeight = avsRect.bottom - avsRect.top;
 
-            // Register the thumbnail
             int result = DwmRegisterThumbnail(_windowHandle, _targetWindow, out _thumbHandle);
             if (result != 0)
             {
@@ -150,7 +149,7 @@ class Program
 
         RegisterThumbnail();
 
-        // Start thread to monitor AVS window and reconnect if needed
+        // Monitor AVS window status in a background thread
         _watchThread = new Thread(() =>
         {
             while (true)
@@ -160,7 +159,7 @@ class Program
                     Console.WriteLine("AVS window closed. Waiting for it to return...");
                     DwmUnregisterThumbnail(_thumbHandle);
 
-                    while ((_targetWindow = FindWindow(null, "AVS")) == IntPtr.Zero)
+                    while ((_targetWindow = FindValidAVSWindow()) == IntPtr.Zero)
                         Thread.Sleep(1000);
 
                     Console.WriteLine("AVS window found again, reconfiguring thumbnail...");
@@ -186,6 +185,44 @@ class Program
             DwmUnregisterThumbnail(_thumbHandle);
     }
 
+    // Scan all windows and return the first AVS window belonging to winamp.exe
+    static IntPtr FindValidAVSWindow()
+    {
+        IntPtr found = IntPtr.Zero;
+
+        EnumWindows((hWnd, lParam) =>
+        {
+            if (!IsWindowVisible(hWnd)) return true;
+
+            StringBuilder title = new StringBuilder(256);
+            GetWindowText(hWnd, title, title.Capacity);
+
+            if (title.ToString() == "AVS" && IsWindowFromWinamp(hWnd))
+            {
+                found = hWnd;
+                return false; // stop
+            }
+
+            return true;
+        }, IntPtr.Zero);
+
+        return found;
+    }
+
+    // Validate that the window belongs to winamp.exe
+    static bool IsWindowFromWinamp(IntPtr hWnd)
+    {
+        GetWindowThreadProcessId(hWnd, out uint pid);
+        IntPtr hProcess = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, false, pid);
+        if (hProcess == IntPtr.Zero) return false;
+
+        var path = new StringBuilder(1024);
+        GetModuleFileNameEx(hProcess, IntPtr.Zero, path, path.Capacity);
+        string exePath = path.ToString().ToLower();
+
+        return exePath.EndsWith("winamp.exe");
+    }
+
     static IntPtr WndProc(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam)
     {
         if (msg == WM_KEYDOWN && wParam.ToInt32() == 0x1B)
@@ -202,11 +239,13 @@ class Program
     const int DWM_TNP_RECTSOURCE = 0x00000002;
     const int DWM_TNP_OPACITY = 0x00000004;
     const int DWM_TNP_VISIBLE = 0x00000008;
+    const uint PROCESS_QUERY_INFORMATION = 0x0400;
+    const uint PROCESS_VM_READ = 0x0010;
 
-    // === Structures ===
-    [StructLayout(LayoutKind.Sequential)]
-    struct RECT { public int left, top, right, bottom; }
-
+    // === Structs ===
+    [StructLayout(LayoutKind.Sequential)] struct RECT { public int left, top, right, bottom; }
+    [StructLayout(LayoutKind.Sequential)] struct POINT { public int x, y; }
+    [StructLayout(LayoutKind.Sequential)] struct MSG { public IntPtr hwnd; public uint message; public UIntPtr wParam; public IntPtr lParam; public uint time; public POINT pt; }
     [StructLayout(LayoutKind.Sequential)]
     struct DWM_THUMBNAIL_PROPERTIES
     {
@@ -217,21 +256,6 @@ class Program
         [MarshalAs(UnmanagedType.Bool)] public bool fVisible;
         [MarshalAs(UnmanagedType.Bool)] public bool fSourceClientAreaOnly;
     }
-
-    [StructLayout(LayoutKind.Sequential)]
-    struct MSG
-    {
-        public IntPtr hwnd;
-        public uint message;
-        public UIntPtr wParam;
-        public IntPtr lParam;
-        public uint time;
-        public POINT pt;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    struct POINT { public int x, y; }
-
     [StructLayout(LayoutKind.Sequential)]
     struct WNDCLASS
     {
@@ -248,8 +272,9 @@ class Program
     }
 
     delegate IntPtr WndProcDelegate(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+    delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
 
-    // === Win32 Interop ===
+    // === Win32 API ===
     [DllImport("user32.dll")] static extern bool GetMessage(out MSG lpMsg, IntPtr hWnd, uint wMsgFilterMin, uint wMsgFilterMax);
     [DllImport("user32.dll")] static extern bool TranslateMessage(ref MSG lpMsg);
     [DllImport("user32.dll")] static extern IntPtr DispatchMessage(ref MSG lpmsg);
@@ -258,11 +283,15 @@ class Program
     [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
     [DllImport("user32.dll")] static extern ushort RegisterClass(ref WNDCLASS lpWndClass);
     [DllImport("user32.dll")] static extern IntPtr DefWindowProc(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
-    [DllImport("user32.dll")] static extern IntPtr FindWindow(string lpClassName, string lpWindowName);
-    [DllImport("user32.dll")] static extern int GetSystemMetrics(int nIndex);
-    [DllImport("kernel32.dll")] static extern IntPtr GetModuleHandle(string lpModuleName);
     [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
     [DllImport("user32.dll")] static extern bool IsWindow(IntPtr hWnd);
+    [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr hWnd);
+    [DllImport("user32.dll")] static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
+    [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Auto)] static extern int GetWindowText(IntPtr hWnd, StringBuilder lpString, int nMaxCount);
+    [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+    [DllImport("kernel32.dll", SetLastError = true)] static extern IntPtr GetModuleHandle(string lpModuleName);
+    [DllImport("kernel32.dll", SetLastError = true)] static extern IntPtr OpenProcess(uint dwDesiredAccess, bool bInheritHandle, uint dwProcessId);
+    [DllImport("psapi.dll", SetLastError = true)] static extern uint GetModuleFileNameEx(IntPtr hProcess, IntPtr hModule, StringBuilder lpFilename, int nSize);
     [DllImport("dwmapi.dll")] static extern int DwmRegisterThumbnail(IntPtr dest, IntPtr src, out IntPtr thumb);
     [DllImport("dwmapi.dll")] static extern int DwmUnregisterThumbnail(IntPtr thumb);
     [DllImport("dwmapi.dll")] static extern int DwmUpdateThumbnailProperties(IntPtr hThumb, ref DWM_THUMBNAIL_PROPERTIES props);
