@@ -8,6 +8,11 @@
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>True</AllowUnsafeBlocks>
     <AssemblyName>AVSOverlay</AssemblyName>
+    <ApplicationIcon>avs_overlay.ico</ApplicationIcon>
   </PropertyGroup>
+
+  <ItemGroup>
+    <Content Include="avs_overlay.ico" />
+  </ItemGroup>
 
 </Project>
