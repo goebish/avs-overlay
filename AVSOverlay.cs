@@ -1,9 +1,5 @@
-﻿using System;
-using System.Runtime.InteropServices;
+﻿using System.Runtime.InteropServices;
 using System.Text;
-using System.Threading;
-using System.Linq;
-using System.Windows.Forms; // Required for Screen[]
 
 class AVSOverlay
 {
@@ -80,27 +76,31 @@ class AVSOverlay
         Console.WriteLine("AVS window detected.");
 
         // Monitor selection
-        var screens = Screen.AllScreens;
-        if (monitorIndex < 0 || monitorIndex >= screens.Length)
+        var monitors = GetMonitorRects();
+        if (monitorIndex >= monitors.Count)
         {
-            Console.WriteLine($"Monitor {monitorIndex} not found. {screens.Length} detected.");
+            Console.WriteLine($"Monitor {monitorIndex} not found. {monitors.Count} detected.");
             return;
         }
-        var screen = screens[monitorIndex];
-        var bounds = screen.Bounds;
 
-        // Create fullscreen mirror window
+        RECT bounds = monitors[monitorIndex];
+
+        // Create fullscreen borderless window
+        int width = bounds.right - bounds.left;
+        int height = bounds.bottom - bounds.top;
+
         _windowHandle = CreateWindowEx(
             0,
             className,
             "AVS Overlay",
             WS_POPUP,
-            bounds.X, bounds.Y, bounds.Width, bounds.Height,
+            bounds.left, bounds.top, width, height,
             IntPtr.Zero,
             IntPtr.Zero,
             GetModuleHandle(null),
             IntPtr.Zero
         );
+
         ShowWindow(_windowHandle, SW_SHOW);
 
         void RegisterThumbnail()
@@ -121,6 +121,9 @@ class AVSOverlay
                 return;
             }
 
+            int screenWidth = bounds.right - bounds.left;
+            int screenHeight = bounds.bottom - bounds.top;
+
             DWM_THUMBNAIL_PROPERTIES props = new DWM_THUMBNAIL_PROPERTIES
             {
                 dwFlags = DWM_TNP_RECTDESTINATION | DWM_TNP_VISIBLE | DWM_TNP_OPACITY | DWM_TNP_RECTSOURCE,
@@ -128,8 +131,8 @@ class AVSOverlay
                 {
                     left = 0,
                     top = 0,
-                    right = bounds.Width,
-                    bottom = bounds.Height
+                    right = screenWidth,
+                    bottom = screenHeight
                 },
                 rcSource = new RECT
                 {
@@ -183,6 +186,29 @@ class AVSOverlay
         if (_thumbHandle != IntPtr.Zero)
             DwmUnregisterThumbnail(_thumbHandle);
     }
+
+    // Get all monitors bounds
+    static List<RECT> GetMonitorRects()
+    {
+        List<RECT> monitors = new List<RECT>();
+
+        EnumDisplayMonitors(IntPtr.Zero, IntPtr.Zero,
+            (IntPtr hMonitor, IntPtr hdcMonitor, ref RECT lprcMonitor, IntPtr dwData) =>
+            {
+                MONITORINFO info = new MONITORINFO();
+                info.cbSize = Marshal.SizeOf(typeof(MONITORINFO));
+
+                if (GetMonitorInfo(hMonitor, ref info))
+                {
+                    monitors.Add(info.rcMonitor);
+                }
+
+                return true;
+            }, IntPtr.Zero);
+
+        return monitors;
+    }
+
 
     // Scan all windows and return the first AVS window belonging to winamp.exe
     static IntPtr FindValidAVSWindow()
@@ -245,6 +271,7 @@ class AVSOverlay
     [StructLayout(LayoutKind.Sequential)] struct RECT { public int left, top, right, bottom; }
     [StructLayout(LayoutKind.Sequential)] struct POINT { public int x, y; }
     [StructLayout(LayoutKind.Sequential)] struct MSG { public IntPtr hwnd; public uint message; public UIntPtr wParam; public IntPtr lParam; public uint time; public POINT pt; }
+    [StructLayout(LayoutKind.Sequential)] struct MONITORINFO { public int cbSize; public RECT rcMonitor; public RECT rcWork; public uint dwFlags; }
     [StructLayout(LayoutKind.Sequential)]
     struct DWM_THUMBNAIL_PROPERTIES
     {
@@ -272,6 +299,7 @@ class AVSOverlay
 
     delegate IntPtr WndProcDelegate(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
     delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+    delegate bool MonitorEnumProc(IntPtr hMonitor, IntPtr hdcMonitor, ref RECT lprcMonitor, IntPtr dwData);
 
     // === Win32 API ===
     [DllImport("user32.dll")] static extern bool GetMessage(out MSG lpMsg, IntPtr hWnd, uint wMsgFilterMin, uint wMsgFilterMax);
@@ -294,4 +322,6 @@ class AVSOverlay
     [DllImport("dwmapi.dll")] static extern int DwmRegisterThumbnail(IntPtr dest, IntPtr src, out IntPtr thumb);
     [DllImport("dwmapi.dll")] static extern int DwmUnregisterThumbnail(IntPtr thumb);
     [DllImport("dwmapi.dll")] static extern int DwmUpdateThumbnailProperties(IntPtr hThumb, ref DWM_THUMBNAIL_PROPERTIES props);
+    [DllImport("user32.dll")] static extern bool EnumDisplayMonitors(IntPtr hdc, IntPtr lprcClip, MonitorEnumProc lpfnEnum, IntPtr dwData);
+    [DllImport("user32.dll")] static extern bool GetMonitorInfo(IntPtr hMonitor, ref MONITORINFO lpmi);
 }
