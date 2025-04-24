@@ -43,7 +43,7 @@ AVSOverlay.exe --monitor 0 --crop 11,20,8,14
 
 - Windows 10 or 11 (DWM must be enabled)  
 - Winamp (tested with classic and modern builds)  
-- [.NET 8 Desktop Runtime](https://dotnet.microsoft.com/en-us/download/dotnet/8.0)  
+- [.NET 8 Runtime](https://dotnet.microsoft.com/en-us/download/dotnet/8.0) (only for building)
 
 ---
 
@@ -71,7 +71,7 @@ It polls windows titled `"AVS"`, filters only the one owned by `winamp.exe`, and
 ```
 git clone https://github.com/goebish/avs-overlay
 cd avs-overlay
-dotnet build -c Release
+publish.bat
 ```
 
 ---
