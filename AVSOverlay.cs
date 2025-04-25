@@ -7,6 +7,7 @@ class AVSOverlay
     static IntPtr _windowHandle;
     static IntPtr _targetWindow;
     static Thread _watchThread;
+    static RECT _lastAvsRect;
 
     static void Main(string[] args)
     {
@@ -111,6 +112,8 @@ class AVSOverlay
                 return;
             }
 
+            _lastAvsRect = avsRect;
+
             int avsWidth = avsRect.right - avsRect.left;
             int avsHeight = avsRect.bottom - avsRect.top;
 
@@ -167,7 +170,19 @@ class AVSOverlay
                     Console.WriteLine("AVS window found, reconfiguring thumbnail...");
                     RegisterThumbnail();
                 }
-                Thread.Sleep(1000);
+
+                // Check for size change
+                RECT currentRect;
+                if (GetWindowRect(_targetWindow, out currentRect))
+                {
+                    if (!RectsEqual(currentRect, _lastAvsRect))
+                    {
+                        Console.WriteLine("AVS window size changed. Reinitializing thumbnail...");
+                        DwmUnregisterThumbnail(_thumbHandle);
+                        RegisterThumbnail();
+                    }
+                }
+                Thread.Sleep(250);
             }
         });
         _watchThread.IsBackground = true;
@@ -185,6 +200,12 @@ class AVSOverlay
 
         if (_thumbHandle != IntPtr.Zero)
             DwmUnregisterThumbnail(_thumbHandle);
+    }
+
+    static bool RectsEqual(RECT a, RECT b)
+    {
+        return a.left == b.left && a.top == b.top &&
+               a.right == b.right && a.bottom == b.bottom;
     }
 
     // Get all monitors bounds
